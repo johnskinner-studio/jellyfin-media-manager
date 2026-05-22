@@ -88,7 +88,7 @@ def get_settings() -> Settings:
 
 
 def _apply_config_json(base: Settings) -> Settings:
-    if not CONFIG_JSON_PATH.exists():
+    if not CONFIG_JSON_PATH.is_file():
         return base
     try:
         data = json.loads(CONFIG_JSON_PATH.read_text())
