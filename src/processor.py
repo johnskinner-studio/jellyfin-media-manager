@@ -175,18 +175,34 @@ def _process(
 # ------------------------------------------------------------------
 
 def _extract_video_from_folder(folder: Path, settings: "Settings") -> Path | None:
-    """Return the largest eligible video file inside folder (recursively)."""
+    """Return the largest eligible video file inside folder (recursively).
+    Skips files whose parent directory name matches an ignored pattern
+    (e.g. Featurettes/, Extras/, Behind the Scenes/).
+    """
     candidates = [
         f
         for f in folder.rglob("*")
         if f.is_file()
         and is_video_file(f, settings)
         and not is_ignored_file(f, settings)
+        and not _is_in_ignored_dir(f, folder, settings)
         and f.stat().st_size >= settings.min_file_size_bytes
     ]
     if not candidates:
         return None
     return max(candidates, key=lambda f: f.stat().st_size)
+
+
+def _is_in_ignored_dir(file: Path, root: Path, settings: "Settings") -> bool:
+    """True if any directory component between root and file matches an ignored pattern."""
+    try:
+        relative = file.relative_to(root)
+    except ValueError:
+        return False
+    for part in relative.parts[:-1]:  # exclude the filename itself
+        if any(pat in part.lower() for pat in settings.ignored_name_patterns):
+            return True
+    return False
 
 
 def _is_stable(path: Path, settings: "Settings") -> bool:

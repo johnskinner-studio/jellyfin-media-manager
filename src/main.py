@@ -75,7 +75,16 @@ def main() -> None:
 
     _watcher_module.process = _instrumented_process
 
-    # 4. Startup scan — update scan_status and feed activity
+    # 4. Start FastAPI / uvicorn BEFORE the scan so the UI is immediately reachable
+    uvicorn_thread = threading.Thread(
+        target=_start_uvicorn,
+        daemon=True,
+        name="uvicorn",
+    )
+    uvicorn_thread.start()
+    log.info("Web UI available at http://0.0.0.0:4000")
+
+    # 5. Startup scan — update scan_status and feed activity
     if settings.scan_on_start:
         log.info("Running initial library scan...")
         for lib_path, lib_type in [
@@ -101,17 +110,8 @@ def main() -> None:
             finally:
                 state.scan_status[lib_type].running = False
 
-    # 5. Start filesystem watcher
+    # 6. Start filesystem watcher
     observer, worker = start_observer(settings, tmdb, tvdb)  # type: ignore[arg-type]
-
-    # 6. Start FastAPI / uvicorn in a daemon background thread
-    uvicorn_thread = threading.Thread(
-        target=_start_uvicorn,
-        daemon=True,
-        name="uvicorn",
-    )
-    uvicorn_thread.start()
-    log.info("Web UI available at http://0.0.0.0:4000")
 
     # 7. Block until SIGTERM or SIGINT
     shutdown_event = threading.Event()

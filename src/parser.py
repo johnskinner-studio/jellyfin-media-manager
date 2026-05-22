@@ -62,6 +62,12 @@ def parse_filename(path: Path, settings: "Settings | None" = None) -> ParsedMedi
     title = result.get("title", "")
     year: int | None = result.get("year")
 
+    # guessit can misparse hyphenated titles (e.g. "WALL-E" → title="E").
+    # If the extracted title is suspiciously short, fall back to extracting
+    # the title from the stem up to the first year or quality indicator.
+    if len(title) <= 2:
+        title = _fallback_title(path.stem) or title
+
     season: int | None = None
     episode: int | None = None
     episode_end: int | None = None
@@ -110,6 +116,23 @@ def _compute_confidence(
     if episode is not None:
         score += 0.15
     return min(score, 1.0)
+
+
+# Matches year or common quality markers that signal the end of a title
+_TITLE_END_RE = re.compile(
+    r"[\.\s_](\d{4}|1080p|720p|480p|2160p|4k|bluray|bdrip|webrip|web-dl|dvdrip|x264|x265|hevc|avc)",
+    re.IGNORECASE,
+)
+
+
+def _fallback_title(stem: str) -> str:
+    """Extract title from a filename stem by cutting at the first quality/year token."""
+    # Replace dots and underscores with spaces
+    cleaned = re.sub(r"[._]", " ", stem).strip()
+    m = _TITLE_END_RE.search(stem)
+    if m:
+        cleaned = re.sub(r"[._]", " ", stem[: m.start()]).strip()
+    return cleaned
 
 
 def is_video_file(path: Path, settings: "Settings") -> bool:
