@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-950">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jellyfin Media Manager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .log-container { font-family: 'Courier New', Courier, monospace; font-size: 0.78rem; }
+    .spinner { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="h-full text-gray-100" x-data="app()" x-cloak>
+
+<!-- Layout -->
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <nav class="w-52 shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
+    <div class="px-4 py-5 border-b border-gray-800">
+      <div class="text-blue-400 font-bold text-sm tracking-wide uppercase">Jellyfin</div>
+      <div class="text-white font-semibold text-base">Media Manager</div>
+    </div>
+    <div class="flex-1 py-4 space-y-1 px-2">
+      <template x-for="item in navItems" :key="item.id">
+        <button
+          @click="page = item.id"
+          :class="page === item.id
+            ? 'bg-blue-600 text-white'
+            : 'text-gray-400 hover:bg-gray-800 hover:text-white'"
+          class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          <span x-text="item.icon" class="text-lg leading-none"></span>
+          <span x-text="item.label"></span>
+        </button>
+      </template>
+    </div>
+    <div class="px-4 py-3 border-t border-gray-800 text-xs text-gray-500">
+      <span x-text="'Uptime: ' + formatUptime(stats ? stats.uptime_seconds : 0)"></span>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="flex-1 overflow-auto bg-gray-950">
+
+    <!-- ===== DASHBOARD ===== -->
+    <section x-show="page === 'dashboard'" x-data="dashboard()" @init-dashboard.window="init()">
+      <div class="p-6 max-w-6xl mx-auto space-y-6">
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold text-white">Dashboard</h1>
+          <div class="flex gap-2">
+            <button @click="runScan('movies')" :disabled="scanning.movies"
+              class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors">
+              <svg x-show="scanning.movies" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+              </svg>
+              <span x-text="scanning.movies ? 'Scanning…' : 'Scan Movies'"></span>
+            </button>
+            <button @click="runScan('tv')" :disabled="scanning.tv"
+              class="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors">
+              <svg x-show="scanning.tv" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+              </svg>
+              <span x-text="scanning.tv ? 'Scanning…' : 'Scan TV Shows'"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Stats cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
+            <div class="text-3xl font-bold text-blue-400" x-text="stats ? stats.movie_count : '—'"></div>
+            <div class="text-sm text-gray-400 mt-1">Movies</div>
+          </div>
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
+            <div class="text-3xl font-bold text-purple-400" x-text="stats ? stats.tv_episode_count : '—'"></div>
+            <div class="text-sm text-gray-400 mt-1">TV Episodes</div>
+          </div>
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
+            <div class="text-3xl font-bold text-green-400" x-text="movedCount"></div>
+            <div class="text-sm text-gray-400 mt-1">Files Organized</div>
+          </div>
+          <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
+            <div class="text-3xl font-bold text-red-400" x-text="stats ? stats.error_count : '—'"></div>
+            <div class="text-sm text-gray-400 mt-1">Errors</div>
+          </div>
+        </div>
+
+        <!-- Scan status -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <template x-for="[lib, status] in scanStatuses" :key="lib">
+            <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
+              <div class="flex items-center gap-2 mb-2">
+                <div :class="status.running ? 'bg-yellow-400' : 'bg-green-500'" class="w-2 h-2 rounded-full"></div>
+                <span class="text-sm font-semibold text-white capitalize" x-text="lib + ' Library'"></span>
+              </div>
+              <div class="text-xs text-gray-400">
+                <span x-text="status.running ? 'Scanning…' : (status.last_run ? 'Last scan: ' + formatDate(status.last_run) : 'Not yet scanned')"></span>
+              </div>
+              <div x-show="status.last_error" class="text-xs text-red-400 mt-1" x-text="status.last_error"></div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Recent activity -->
+        <div class="bg-gray-900 rounded-xl border border-gray-800">
+          <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+            <h2 class="font-semibold text-white">Recent Activity</h2>
+            <button @click="$dispatch('nav-activity')" class="text-xs text-blue-400 hover:text-blue-300">View all →</button>
+          </div>
+          <div class="divide-y divide-gray-800">
+            <template x-if="activity.length === 0">
+              <div class="px-5 py-8 text-center text-gray-500 text-sm">No activity yet</div>
+            </template>
+            <template x-for="item in activity" :key="item.ts + item.source">
+              <div class="px-5 py-3 flex items-start gap-3">
+                <span :class="resultDot(item.result)" class="mt-1.5 w-2 h-2 rounded-full shrink-0"></span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm text-gray-200 truncate" x-text="baseName(item.source)"></div>
+                  <div x-show="item.destination" class="text-xs text-gray-500 truncate" x-text="'→ ' + baseName(item.destination || '')"></div>
+                </div>
+                <span :class="resultBadge(item.result)" class="shrink-0 text-xs px-2 py-0.5 rounded-full font-medium" x-text="item.result"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== LIBRARY BROWSER ===== -->
+    <section x-show="page === 'library'" x-data="libraryBrowser()">
+      <div class="p-6 max-w-5xl mx-auto space-y-4">
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold text-white">Library Browser</h1>
+          <div class="flex gap-2">
+            <button @click="switchLib('movies')" :class="activeLib === 'movies' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">Movies</button>
+            <button @click="switchLib('tv')" :class="activeLib === 'tv' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'" class="px-4 py-2 rounded-lg text-sm font-medium transition-colors">TV Shows</button>
+          </div>
+        </div>
+
+        <div class="bg-gray-900 rounded-xl border border-gray-800">
+          <div class="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
+            <span class="text-sm text-gray-400" x-text="activeLib === 'movies' ? 'Movies Library' : 'TV Shows Library'"></span>
+            <span x-show="loading" class="text-xs text-blue-400">Loading…</span>
+          </div>
+          <div class="p-2">
+            <template x-if="tree">
+              <div x-data="{ nodes: tree.children || [] }">
+                <template x-for="node in nodes" :key="node.path">
+                  <div x-data="treeNode(node, activeLib)" class="select-none">
+                    <div @click="toggle()" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-800 cursor-pointer group">
+                      <span class="text-gray-500 w-4 text-center text-xs" x-text="node.is_dir ? (expanded ? '▼' : '▶') : ''"></span>
+                      <span x-text="node.is_dir ? '📁' : '🎬'" class="shrink-0"></span>
+                      <span class="text-sm text-gray-200 flex-1 truncate" x-text="node.name"></span>
+                      <span x-show="!node.is_dir && node.organized" class="text-green-400 text-xs font-medium">✓</span>
+                      <span x-show="!node.is_dir && !node.organized" class="text-yellow-400 text-xs font-medium">⚠</span>
+                      <span x-show="node.size_bytes" class="text-xs text-gray-500 ml-2" x-text="formatSize(node.size_bytes)"></span>
+                    </div>
+                    <div x-show="expanded && node.is_dir" class="ml-6 border-l border-gray-800 pl-2">
+                      <template x-if="loadingChildren">
+                        <div class="px-3 py-2 text-xs text-gray-500">Loading…</div>
+                      </template>
+                      <template x-for="child in children" :key="child.path">
+                        <div x-data="treeNode(child, activeLib)">
+                          <div @click="toggle()" class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-800 cursor-pointer">
+                            <span class="text-gray-500 w-4 text-center text-xs" x-text="child.is_dir ? (expanded ? '▼' : '▶') : ''"></span>
+                            <span x-text="child.is_dir ? '📁' : '🎬'" class="shrink-0"></span>
+                            <span class="text-sm text-gray-300 flex-1 truncate" x-text="child.name"></span>
+                            <span x-show="!child.is_dir && child.organized" class="text-green-400 text-xs">✓</span>
+                            <span x-show="!child.is_dir && !child.organized" class="text-yellow-400 text-xs">⚠</span>
+                            <span x-show="child.size_bytes" class="text-xs text-gray-500" x-text="formatSize(child.size_bytes)"></span>
+                          </div>
+                          <div x-show="expanded && child.is_dir" class="ml-6 border-l border-gray-800 pl-2">
+                            <template x-if="loadingChildren">
+                              <div class="px-3 py-2 text-xs text-gray-500">Loading…</div>
+                            </template>
+                            <template x-for="grandchild in children" :key="grandchild.path">
+                              <div class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-800">
+                                <span class="w-4"></span>
+                                <span x-text="grandchild.is_dir ? '📁' : '🎬'" class="shrink-0"></span>
+                                <span class="text-sm text-gray-400 flex-1 truncate" x-text="grandchild.name"></span>
+                                <span x-show="!grandchild.is_dir && grandchild.organized" class="text-green-400 text-xs">✓</span>
+                                <span x-show="!grandchild.is_dir && !grandchild.organized" class="text-yellow-400 text-xs">⚠</span>
+                                <span x-show="grandchild.size_bytes" class="text-xs text-gray-500" x-text="formatSize(grandchild.size_bytes)"></span>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="!nodes || nodes.length === 0">
+                  <div class="px-5 py-8 text-center text-gray-500 text-sm">Library is empty or not mounted</div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="text-xs text-gray-600 flex gap-4">
+          <span class="flex items-center gap-1"><span class="text-green-400">✓</span> Correctly organized</span>
+          <span class="flex items-center gap-1"><span class="text-yellow-400">⚠</span> Needs organizing</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== ACTIVITY ===== -->
+    <section x-show="page === 'activity'" x-data="activityLog()" @nav-activity.window="page = 'activity'">
+      <div class="p-6 max-w-6xl mx-auto space-y-4">
+        <h1 class="text-2xl font-bold text-white">Activity Log</h1>
+
+        <!-- Filters -->
+        <div class="flex flex-wrap gap-2">
+          <template x-for="f in resultFilters" :key="f.value">
+            <button
+              @click="setFilter(f.value)"
+              :class="filterResult === f.value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'"
+              class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              x-text="f.label"
+            ></button>
+          </template>
+        </div>
+
+        <div class="bg-gray-900 rounded-xl border border-gray-800">
+          <div class="px-5 py-3 border-b border-gray-800 text-xs text-gray-400">
+            <span x-text="total + ' total results'"></span>
+          </div>
+          <div class="divide-y divide-gray-800">
+            <template x-if="items.length === 0">
+              <div class="px-5 py-8 text-center text-gray-500 text-sm">No activity matches this filter</div>
+            </template>
+            <template x-for="item in items" :key="item.ts + item.source">
+              <div class="px-5 py-3">
+                <div class="flex items-start gap-3">
+                  <span :class="resultDot(item.result)" class="mt-1.5 w-2 h-2 rounded-full shrink-0"></span>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span :class="resultBadge(item.result)" class="text-xs px-2 py-0.5 rounded-full font-medium" x-text="item.result"></span>
+                      <span class="text-xs text-gray-500" x-text="item.ts"></span>
+                      <span class="text-xs text-gray-600 capitalize" x-text="item.library_type"></span>
+                    </div>
+                    <div class="text-sm text-gray-300 mt-1 truncate font-mono" x-text="item.source"></div>
+                    <div x-show="item.destination" class="text-xs text-gray-500 mt-0.5 truncate font-mono" x-text="'→ ' + item.destination"></div>
+                    <div x-show="item.message" class="text-xs text-yellow-400 mt-0.5" x-text="item.message"></div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <!-- Pagination -->
+          <div class="px-5 py-3 border-t border-gray-800 flex items-center justify-between text-sm">
+            <button @click="prevPage()" :disabled="currentPage === 0" class="px-3 py-1 bg-gray-800 rounded disabled:opacity-40 text-sm">← Prev</button>
+            <span class="text-gray-400 text-xs" x-text="'Page ' + (currentPage + 1) + ' of ' + totalPages"></span>
+            <button @click="nextPage()" :disabled="currentPage >= totalPages - 1" class="px-3 py-1 bg-gray-800 rounded disabled:opacity-40 text-sm">Next →</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== LOGS ===== -->
+    <section x-show="page === 'logs'" x-data="logsViewer()">
+      <div class="p-6 h-full flex flex-col max-w-full space-y-4">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <h1 class="text-2xl font-bold text-white">Live Logs</h1>
+          <div class="flex items-center gap-3 flex-wrap">
+            <!-- Level filter -->
+            <div class="flex gap-1">
+              <template x-for="lvl in ['', 'DEBUG', 'INFO', 'WARNING', 'ERROR']" :key="lvl">
+                <button
+                  @click="filterLevel = lvl"
+                  :class="filterLevel === lvl ? levelActiveBg(lvl) : 'bg-gray-800 text-gray-400 hover:bg-gray-700'"
+                  class="px-3 py-1 rounded text-xs font-medium transition-colors"
+                  x-text="lvl || 'ALL'"
+                ></button>
+              </template>
+            </div>
+            <!-- Search -->
+            <input x-model="searchText" placeholder="Search logs…"
+              class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 w-48" />
+            <!-- Auto-scroll -->
+            <label class="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+              <input type="checkbox" x-model="autoScroll" class="accent-blue-500" />
+              Auto-scroll
+            </label>
+            <!-- WS status -->
+            <div class="flex items-center gap-1.5">
+              <div :class="wsConnected ? 'bg-green-500' : 'bg-red-500'" class="w-2 h-2 rounded-full"></div>
+              <span class="text-xs text-gray-500" x-text="wsConnected ? 'Connected' : 'Reconnecting…'"></span>
+            </div>
+          </div>
+        </div>
+
+        <div
+          x-ref="logContainer"
+          class="log-container flex-1 bg-gray-900 rounded-xl border border-gray-800 overflow-y-auto p-4 space-y-0.5"
+          style="min-height: 400px; max-height: calc(100vh - 200px);"
+        >
+          <template x-if="filtered.length === 0">
+            <div class="text-gray-600 text-sm">No log entries match the current filter.</div>
+          </template>
+          <template x-for="(line, i) in filtered" :key="i">
+            <div class="flex gap-3 hover:bg-gray-800 px-2 py-0.5 rounded">
+              <span class="text-gray-600 shrink-0 w-20" x-text="line.ts.slice(11)"></span>
+              <span :class="levelColor(line.level)" class="shrink-0 w-16 font-semibold" x-text="line.level"></span>
+              <span class="text-gray-500 shrink-0 truncate max-w-40 hidden lg:block" x-text="shortLogger(line.logger)"></span>
+              <span class="text-gray-200 break-all" x-text="line.message"></span>
+            </div>
+          </template>
+        </div>
+        <div class="text-xs text-gray-600" x-text="filtered.length + ' lines shown (buffer: ' + lines.length + ')'"></div>
+      </div>
+    </section>
+
+    <!-- ===== SETTINGS ===== -->
+    <section x-show="page === 'settings'" x-data="settingsForm()">
+      <div class="p-6 max-w-2xl mx-auto space-y-6">
+        <h1 class="text-2xl font-bold text-white">Settings</h1>
+
+        <!-- Editable settings -->
+        <div class="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-5">
+          <h2 class="font-semibold text-white text-base border-b border-gray-800 pb-3">Runtime Configuration</h2>
+
+          <!-- Dry run -->
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-medium text-gray-200">Dry Run Mode</div>
+              <div class="text-xs text-gray-500">Log intended moves without executing them</div>
+            </div>
+            <button @click="form.dry_run = !form.dry_run"
+              :class="form.dry_run ? 'bg-blue-600' : 'bg-gray-700'"
+              class="relative w-11 h-6 rounded-full transition-colors cursor-pointer">
+              <span :class="form.dry_run ? 'translate-x-5' : 'translate-x-1'"
+                class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform inline-block"></span>
+            </button>
+          </div>
+
+          <!-- Log level -->
+          <div>
+            <label class="text-sm font-medium text-gray-200">Log Level</label>
+            <select x-model="form.log_level"
+              class="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500">
+              <template x-for="lvl in ['DEBUG', 'INFO', 'WARNING', 'ERROR']" :key="lvl">
+                <option :value="lvl" x-text="lvl"></option>
+              </template>
+            </select>
+          </div>
+
+          <!-- Min file size -->
+          <div>
+            <label class="text-sm font-medium text-gray-200">Minimum File Size (MB)</label>
+            <div class="text-xs text-gray-500 mb-1">Files smaller than this are ignored (prevents processing samples)</div>
+            <input type="number" x-model.number="form.min_file_size_mb" min="1" max="10000"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500" />
+          </div>
+
+          <!-- Settle delay -->
+          <div>
+            <label class="text-sm font-medium text-gray-200">Settle Delay (seconds)</label>
+            <div class="text-xs text-gray-500 mb-1">Seconds to wait after last filesystem event before processing a file</div>
+            <input type="number" x-model.number="form.settle_delay" min="1" max="300"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500" />
+          </div>
+
+          <!-- Scan workers -->
+          <div>
+            <label class="text-sm font-medium text-gray-200">Scan Worker Threads</label>
+            <div class="text-xs text-gray-500 mb-1">Number of parallel threads used during library scans</div>
+            <input type="number" x-model.number="form.scan_workers" min="1" max="16"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500" />
+          </div>
+
+          <!-- Save button -->
+          <div class="flex items-center gap-3 pt-2">
+            <button @click="save()"
+              class="px-5 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors">
+              Save Changes
+            </button>
+            <span x-show="saved" class="text-green-400 text-sm">✓ Saved</span>
+            <span x-show="error" class="text-red-400 text-sm" x-text="error"></span>
+          </div>
+          <p class="text-xs text-gray-600">Settings are persisted to <code>config.json</code> and survive container restarts.</p>
+        </div>
+
+        <!-- Read-only info -->
+        <div class="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-4">
+          <h2 class="font-semibold text-white text-base border-b border-gray-800 pb-3">Read-Only Configuration</h2>
+          <p class="text-xs text-gray-500">These values are set via environment variables at container startup.</p>
+
+          <template x-for="[key, val] in readOnlyEntries" :key="key">
+            <div>
+              <div class="text-xs font-medium text-gray-400 uppercase tracking-wide" x-text="key.replace(/_/g,' ')"></div>
+              <div class="text-sm text-gray-300 mt-0.5 font-mono break-all" x-text="val || '(not set)'"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// ------------------------------------------------------------------
+// Root app component
+// ------------------------------------------------------------------
+function app() {
+  return {
+    page: 'dashboard',
+    stats: null,
+    navItems: [
+      { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+      { id: 'library',   label: 'Library',   icon: '📂' },
+      { id: 'activity',  label: 'Activity',   icon: '📋' },
+      { id: 'logs',      label: 'Logs',       icon: '📜' },
+      { id: 'settings',  label: 'Settings',   icon: '⚙️' },
+    ],
+    async init() {
+      // Poll stats for sidebar uptime and global state
+      await this.fetchStats();
+      setInterval(() => this.fetchStats(), 15000);
+
+      // Navigate to activity on custom event
+      window.addEventListener('nav-activity', () => { this.page = 'activity'; });
+      // Trigger dashboard init
+      window.dispatchEvent(new CustomEvent('init-dashboard'));
+    },
+    async fetchStats() {
+      try {
+        const data = await fetch('/api/stats').then(r => r.json());
+        this.stats = data;
+      } catch (_) {}
+    },
+    formatUptime(s) {
+      if (!s) return '—';
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    },
+  }
+}
+
+// ------------------------------------------------------------------
+// Dashboard
+// ------------------------------------------------------------------
+function dashboard() {
+  return {
+    stats: null,
+    activity: [],
+    scanning: { movies: false, tv: false },
+    _pollTimers: {},
+
+    async init() {
+      await this.refresh();
+      setInterval(() => this.refresh(), 10000);
+    },
+    async refresh() {
+      try {
+        const [s, a] = await Promise.all([
+          fetch('/api/stats').then(r => r.json()),
+          fetch('/api/activity?limit=20').then(r => r.json()),
+        ]);
+        this.stats = s;
+        this.activity = a.items;
+        // Sync scanning state from server
+        if (s.scan_status) {
+          this.scanning.movies = s.scan_status.movies?.running || false;
+          this.scanning.tv = s.scan_status.tv?.running || false;
+        }
+      } catch (_) {}
+    },
+    get movedCount() {
+      return this.activity.filter(a => a.result === 'moved').length;
+    },
+    get scanStatuses() {
+      if (!this.stats?.scan_status) return [];
+      return Object.entries(this.stats.scan_status);
+    },
+    async runScan(libType) {
+      if (this.scanning[libType]) return;
+      this.scanning[libType] = true;
+      try {
+        const resp = await fetch(`/api/scan/${libType}`, { method: 'POST' });
+        if (!resp.ok) {
+          const err = await resp.json();
+          alert(err.detail || 'Scan failed to start');
+          this.scanning[libType] = false;
+          return;
+        }
+      } catch (_) {
+        this.scanning[libType] = false;
+        return;
+      }
+      // Poll until done
+      const timer = setInterval(async () => {
+        try {
+          const s = await fetch('/api/stats').then(r => r.json());
+          if (!s.scan_status[libType]?.running) {
+            this.scanning[libType] = false;
+            clearInterval(timer);
+            await this.refresh();
+          }
+        } catch (_) {}
+      }, 2000);
+    },
+    resultDot(result) {
+      const map = {
+        moved: 'bg-green-500', dry_run: 'bg-blue-500',
+        skipped_already_organized: 'bg-gray-500',
+        skipped_too_small: 'bg-gray-500', skipped_not_video: 'bg-gray-500',
+        skipped_unstable: 'bg-yellow-400',
+      };
+      return map[result] || (result.startsWith('error') ? 'bg-red-500' : 'bg-gray-600');
+    },
+    resultBadge(result) {
+      if (result === 'moved') return 'bg-green-900 text-green-300';
+      if (result === 'dry_run') return 'bg-blue-900 text-blue-300';
+      if (result.startsWith('error')) return 'bg-red-900 text-red-300';
+      return 'bg-gray-800 text-gray-400';
+    },
+    baseName(p) { return p ? p.split('/').pop() : ''; },
+    formatDate(d) {
+      if (!d) return '';
+      return new Date(d + 'Z').toLocaleString();
+    },
+  }
+}
+
+// ------------------------------------------------------------------
+// Library browser
+// ------------------------------------------------------------------
+function libraryBrowser() {
+  return {
+    activeLib: 'movies',
+    tree: null,
+    loading: false,
+
+    async init() { await this.loadTree(); },
+    async loadTree(path = null) {
+      this.loading = true;
+      try {
+        const url = path
+          ? `/api/library/${this.activeLib}/tree?path=${encodeURIComponent(path)}`
+          : `/api/library/${this.activeLib}/tree`;
+        this.tree = await fetch(url).then(r => r.json());
+      } catch (_) {
+        this.tree = { children: [] };
+      } finally {
+        this.loading = false;
+      }
+    },
+    switchLib(lib) {
+      this.activeLib = lib;
+      this.loadTree();
+    },
+    formatSize(bytes) {
+      if (!bytes) return '';
+      if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+      if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB';
+      return (bytes / 1e3).toFixed(0) + ' KB';
+    },
+  }
+}
+
+function treeNode(initialNode, libType) {
+  return {
+    node: initialNode,
+    expanded: false,
+    loadingChildren: false,
+    children: initialNode.children || [],
+    libType,
+    async toggle() {
+      if (!this.node.is_dir) return;
+      if (this.expanded) { this.expanded = false; return; }
+      this.expanded = true;
+      if (this.children.length === 0) {
+        this.loadingChildren = true;
+        try {
+          const data = await fetch(
+            `/api/library/${this.libType}/tree?path=${encodeURIComponent(this.node.path)}`
+          ).then(r => r.json());
+          this.children = data.children || [];
+        } catch (_) {} finally {
+          this.loadingChildren = false;
+        }
+      }
+    },
+    formatSize(bytes) {
+      if (!bytes) return '';
+      if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+      if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB';
+      return (bytes / 1e3).toFixed(0) + ' KB';
+    },
+  }
+}
+
+// ------------------------------------------------------------------
+// Activity log
+// ------------------------------------------------------------------
+function activityLog() {
+  return {
+    items: [],
+    total: 0,
+    currentPage: 0,
+    pageSize: 50,
+    filterResult: '',
+    resultFilters: [
+      { value: '', label: 'All' },
+      { value: 'moved', label: '✓ Moved' },
+      { value: 'dry_run', label: '○ Dry Run' },
+      { value: 'skipped_already_organized', label: 'Already Organized' },
+      { value: 'skipped_too_small', label: 'Too Small' },
+      { value: 'error_no_metadata', label: '✗ No Metadata' },
+      { value: 'error_conflict', label: '✗ Conflict' },
+      { value: 'error_exception', label: '✗ Exception' },
+    ],
+
+    async init() { await this.load(); },
+    async load() {
+      const offset = this.currentPage * this.pageSize;
+      const filter = this.filterResult ? `&result=${encodeURIComponent(this.filterResult)}` : '';
+      try {
+        const data = await fetch(`/api/activity?limit=${this.pageSize}&offset=${offset}${filter}`).then(r => r.json());
+        this.items = data.items;
+        this.total = data.total;
+      } catch (_) {}
+    },
+    get totalPages() { return Math.max(1, Math.ceil(this.total / this.pageSize)); },
+    prevPage() { if (this.currentPage > 0) { this.currentPage--; this.load(); } },
+    nextPage() { if (this.currentPage < this.totalPages - 1) { this.currentPage++; this.load(); } },
+    setFilter(val) { this.filterResult = val; this.currentPage = 0; this.load(); },
+    resultDot(result) {
+      if (result === 'moved') return 'bg-green-500';
+      if (result === 'dry_run') return 'bg-blue-500';
+      if (result.startsWith('error')) return 'bg-red-500';
+      return 'bg-gray-600';
+    },
+    resultBadge(result) {
+      if (result === 'moved') return 'bg-green-900 text-green-300';
+      if (result === 'dry_run') return 'bg-blue-900 text-blue-300';
+      if (result.startsWith('error')) return 'bg-red-900 text-red-300';
+      return 'bg-gray-800 text-gray-400';
+    },
+  }
+}
+
+// ------------------------------------------------------------------
+// Logs viewer
+// ------------------------------------------------------------------
+function logsViewer() {
+  return {
+    lines: [],
+    ws: null,
+    wsConnected: false,
+    filterLevel: '',
+    searchText: '',
+    autoScroll: true,
+    maxLines: 1000,
+
+    init() { this.connect(); },
+    connect() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      this.ws = new WebSocket(`${proto}://${location.host}/ws/logs`);
+      this.ws.onopen = () => { this.wsConnected = true; };
+      this.ws.onclose = () => {
+        this.wsConnected = false;
+        setTimeout(() => this.connect(), 3000);
+      };
+      this.ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'log_batch') {
+          this.lines = msg.entries.slice(-this.maxLines);
+        } else if (msg.type === 'log_line') {
+          this.lines.push(...msg.entries);
+          if (this.lines.length > this.maxLines)
+            this.lines.splice(0, this.lines.length - this.maxLines);
+        }
+        if (this.autoScroll) this.$nextTick(() => this.scrollBottom());
+      };
+      // Keepalive ping every 30s
+      setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN)
+          this.ws.send(JSON.stringify({ type: 'ping' }));
+      }, 30000);
+    },
+    get filtered() {
+      const lvl = this.filterLevel;
+      const q = this.searchText.toLowerCase();
+      return this.lines.filter(l =>
+        (!lvl || l.level === lvl) &&
+        (!q || l.message.toLowerCase().includes(q) || l.logger.toLowerCase().includes(q))
+      );
+    },
+    scrollBottom() {
+      const el = this.$refs.logContainer;
+      if (el) el.scrollTop = el.scrollHeight;
+    },
+    levelColor(level) {
+      return { DEBUG: 'text-gray-500', INFO: 'text-green-400', WARNING: 'text-yellow-400', ERROR: 'text-red-400' }[level] || 'text-gray-400';
+    },
+    levelActiveBg(level) {
+      return { '': 'bg-gray-600 text-white', DEBUG: 'bg-gray-500 text-white', INFO: 'bg-green-700 text-white', WARNING: 'bg-yellow-700 text-white', ERROR: 'bg-red-700 text-white' }[level] || 'bg-gray-600 text-white';
+    },
+    shortLogger(logger) {
+      return logger.split('.').slice(-2).join('.');
+    },
+    destroy() { this.ws?.close(); },
+  }
+}
+
+// ------------------------------------------------------------------
+// Settings form
+// ------------------------------------------------------------------
+function settingsForm() {
+  return {
+    form: { dry_run: false, log_level: 'INFO', min_file_size_mb: 100, settle_delay: 10, scan_workers: 4 },
+    readOnly: {},
+    saved: false,
+    error: null,
+
+    async init() {
+      try {
+        const data = await fetch('/api/settings').then(r => r.json());
+        this.form.dry_run = data.dry_run;
+        this.form.log_level = data.log_level;
+        this.form.min_file_size_mb = data.min_file_size_mb;
+        this.form.settle_delay = data.settle_delay;
+        this.form.scan_workers = data.scan_workers;
+        this.readOnly = {
+          tmdb_api_key: data.tmdb_api_key,
+          tvdb_api_key: data.tvdb_api_key,
+          tv_library_path: data.tv_library_path,
+          movies_library_path: data.movies_library_path,
+          stability_check_interval: data.stability_check_interval + 's',
+          stability_check_retries: data.stability_check_retries,
+        };
+      } catch (_) {}
+    },
+    get readOnlyEntries() { return Object.entries(this.readOnly); },
+    async save() {
+      this.error = null;
+      this.saved = false;
+      try {
+        const resp = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.form),
+        });
+        if (resp.ok) {
+          this.saved = true;
+          setTimeout(() => { this.saved = false; }, 3000);
+        } else {
+          const err = await resp.json();
+          this.error = err.detail || 'Save failed';
+        }
+      } catch (e) {
+        this.error = 'Network error';
+      }
+    },
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+services:
+  media-manager:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - "/mnt/storage/Movies:/mnt/storage/Movies"
+      - "/mnt/storage/TV Shows:/mnt/storage/TV Shows"
+      - "./config.json:/app/config.json"
+    env_file:
+      - .env
+    environment:
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - TVDB_API_KEY=${TVDB_API_KEY:-}
+      - TV_LIBRARY_PATH=${TV_LIBRARY_PATH:-/mnt/storage/TV Shows}
+      - MOVIES_LIBRARY_PATH=${MOVIES_LIBRARY_PATH:-/mnt/storage/Movies}
+      - DRY_RUN=${DRY_RUN:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SCAN_ON_START=${SCAN_ON_START:-true}
+      - MIN_FILE_SIZE_MB=${MIN_FILE_SIZE_MB:-100}
