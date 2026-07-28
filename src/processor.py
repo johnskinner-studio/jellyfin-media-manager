@@ -170,7 +170,7 @@ def _process(
     # 11. Clean up source location — delete junk files and remove empty dirs
     source_dir = candidate if candidate.is_dir() else candidate.parent
     if source_dir != library_path:
-        cleanup_source(source_dir, library_path, settings.ignored_extensions, dry_run=False)
+        cleanup_source(source_dir, library_path, dry_run=False)
 
     return ProcessReport(
         source=candidate,

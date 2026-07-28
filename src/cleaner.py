@@ -42,43 +42,83 @@ def remove_empty_dirs(root: Path, stop_at: Path, dry_run: bool = False) -> None:
                     log.warning("Could not remove dir %s: %s", dirpath, exc)
 
 
+def clean_orphaned_dirs(
+    library_path: Path,
+    min_file_size_bytes: int,
+    video_extensions: frozenset[str],
+    dry_run: bool = False,
+) -> int:
+    """
+    Walk the top level of library_path and remove any directory that contains
+    no eligible video files — these are leftover download folders whose video
+    was already moved to the organised location.  Returns the number of
+    directories cleaned.
+    """
+    if not library_path.exists():
+        return 0
+
+    cleaned = 0
+    for item in sorted(library_path.iterdir()):
+        if not item.is_dir():
+            continue
+        has_video = any(
+            f.is_file()
+            and f.suffix.lower() in video_extensions
+            and f.stat().st_size >= min_file_size_bytes
+            for f in item.rglob("*")
+        )
+        if has_video:
+            continue
+        log.info("%sRemoving orphaned download dir: %s", "[DRY RUN] Would remove" if dry_run else "", item)
+        cleanup_source(item, library_path, dry_run=dry_run)
+        cleaned += 1
+    return cleaned
+
+
 def cleanup_source(
     source_dir: Path,
     stop_at: Path,
-    ignored_extensions: frozenset[str],
     dry_run: bool = False,
 ) -> None:
     """
-    After a video file has been moved out of source_dir, delete leftover
-    junk files (nfo, jpg, srt, etc.) and then remove empty directories
-    including source_dir itself if it ends up empty.
+    After a video file has been moved out of source_dir, delete everything
+    that remains (all files regardless of extension, then empty directories)
+    and remove source_dir itself.
     """
     if source_dir == stop_at or not source_dir.exists():
         return
 
-    # Delete ignorable leftover files (nfo, jpg, srt, sfv, …)
-    for f in list(source_dir.rglob("*")):
-        if f.is_file() and f.suffix.lower() in ignored_extensions:
-            if dry_run:
-                log.info("[DRY RUN] Would delete leftover: %s", f)
-            else:
-                try:
-                    f.unlink()
-                    log.debug("Deleted leftover: %s", f)
-                except OSError as exc:
-                    log.warning("Could not delete %s: %s", f, exc)
-
-    # Remove empty subdirectories bottom-up
-    remove_empty_dirs(source_dir, stop_at, dry_run=dry_run)
-
-    # Remove source_dir itself if now empty (remove_empty_dirs skips it
-    # when it is a direct child of stop_at, so handle that here)
-    if source_dir.is_dir() and not any(source_dir.iterdir()):
+    # Delete all remaining files (rar, nfo, jpg, srt, sfv, sample, etc.)
+    for f in source_dir.rglob("*"):
+        if not f.is_file():
+            continue
         if dry_run:
-            log.info("[DRY RUN] Would remove source dir: %s", source_dir)
+            log.info("[DRY RUN] Would delete: %s", f)
         else:
             try:
-                source_dir.rmdir()
-                log.debug("Removed source dir: %s", source_dir)
+                f.unlink()
+                log.debug("Deleted: %s", f)
             except OSError as exc:
-                log.warning("Could not remove source dir %s: %s", source_dir, exc)
+                log.warning("Could not delete %s: %s", f, exc)
+
+    # Remove subdirectories bottom-up, then the source dir itself
+    for d in sorted(source_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if not d.is_dir():
+            continue
+        if dry_run:
+            log.info("[DRY RUN] Would remove dir: %s", d)
+        else:
+            try:
+                d.rmdir()
+                log.debug("Removed dir: %s", d)
+            except OSError as exc:
+                log.warning("Could not remove dir %s: %s", d, exc)
+
+    if dry_run:
+        log.info("[DRY RUN] Would remove source dir: %s", source_dir)
+    else:
+        try:
+            source_dir.rmdir()
+            log.debug("Removed source dir: %s", source_dir)
+        except OSError as exc:
+            log.warning("Could not remove source dir %s: %s", source_dir, exc)

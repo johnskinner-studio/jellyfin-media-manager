@@ -49,9 +49,12 @@
     <!-- ===== DASHBOARD ===== -->
     <section x-show="page === 'dashboard'" x-data="dashboard()" @init-dashboard.window="init()">
       <div class="p-6 max-w-6xl mx-auto space-y-6">
-        <div class="flex items-center justify-between">
-          <h1 class="text-2xl font-bold text-white">Dashboard</h1>
-          <div class="flex gap-2">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 class="text-2xl font-bold text-white">Dashboard</h1>
+            <div x-show="cleanupResult" class="text-sm mt-0.5" :class="cleanupResult && cleanupResult.startsWith('✓') ? 'text-teal-400' : 'text-red-400'" x-text="cleanupResult"></div>
+          </div>
+          <div class="flex gap-2 flex-wrap">
             <button @click="runScan('movies')" :disabled="scanning.movies"
               class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors">
               <svg x-show="scanning.movies" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
@@ -67,6 +70,14 @@
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
               </svg>
               <span x-text="scanning.tv ? 'Scanning…' : 'Scan TV Shows'"></span>
+            </button>
+            <button @click="runCleanup()" :disabled="cleaning"
+              class="flex items-center gap-2 px-4 py-2 bg-teal-700 hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors">
+              <svg x-show="cleaning" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+              </svg>
+              <span x-text="cleaning ? 'Cleaning…' : 'Clean Up'"></span>
             </button>
           </div>
         </div>
@@ -514,6 +525,8 @@ function dashboard() {
     pendingItems: [],
     showReview: false,
     scanning: { movies: false, tv: false },
+    cleaning: false,
+    cleanupResult: '',
     _pollTimers: {},
 
     async init() {
@@ -544,6 +557,25 @@ function dashboard() {
           this.scanning.tv = s.scan_status.tv?.running || false;
         }
       } catch (_) {}
+    },
+    async runCleanup() {
+      if (this.cleaning) return;
+      this.cleaning = true;
+      this.cleanupResult = '';
+      try {
+        const data = await fetch('/api/cleanup', { method: 'POST' }).then(r => r.json());
+        const total = data.movies_cleaned + data.tv_cleaned;
+        const prefix = data.dry_run ? '[Dry Run] ' : '';
+        this.cleanupResult = total > 0
+          ? `✓ ${prefix}Cleaned ${total} folder${total !== 1 ? 's' : ''} (${data.movies_cleaned} movies, ${data.tv_cleaned} TV)`
+          : `✓ ${prefix}Nothing to clean up`;
+        setTimeout(() => { this.cleanupResult = ''; }, 8000);
+      } catch (_) {
+        this.cleanupResult = 'Cleanup failed — check logs';
+        setTimeout(() => { this.cleanupResult = ''; }, 5000);
+      } finally {
+        this.cleaning = false;
+      }
     },
     get movedCount() {
       return this.activity.filter(a => a.result === 'moved').length;

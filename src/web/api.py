@@ -188,6 +188,33 @@ def _add_pending(
 
 
 # ------------------------------------------------------------------
+# Manual cleanup
+# ------------------------------------------------------------------
+
+@router.post("/cleanup")
+def trigger_cleanup(state: StateDep) -> dict:
+    from ..cleaner import clean_orphaned_dirs
+    settings = get_settings()
+    movies_cleaned = clean_orphaned_dirs(
+        settings.movies_library_path,
+        settings.min_file_size_bytes,
+        settings.video_extensions,
+        dry_run=settings.dry_run,
+    )
+    tv_cleaned = clean_orphaned_dirs(
+        settings.tv_library_path,
+        settings.min_file_size_bytes,
+        settings.video_extensions,
+        dry_run=settings.dry_run,
+    )
+    return {
+        "movies_cleaned": movies_cleaned,
+        "tv_cleaned": tv_cleaned,
+        "dry_run": settings.dry_run,
+    }
+
+
+# ------------------------------------------------------------------
 # Pending review queue
 # ------------------------------------------------------------------
 
