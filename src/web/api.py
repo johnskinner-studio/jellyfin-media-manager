@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from ..config import _EDITABLE_FIELDS, get_settings, update_settings
@@ -249,9 +249,10 @@ def retry_pending(item_id: str, body: RetryBody, state: StateDep) -> dict:
 
 
 @router.delete("/pending/{item_id}", status_code=204)
-def dismiss_pending(item_id: str, state: StateDep) -> None:
+def dismiss_pending(item_id: str, state: StateDep) -> Response:
     if not state.remove_pending(item_id):
         raise HTTPException(status_code=404, detail="Pending item not found")
+    return Response(status_code=204)
 
 
 # ------------------------------------------------------------------
