@@ -13,8 +13,8 @@ from pydantic import BaseModel
 from ..config import _EDITABLE_FIELDS, get_settings, update_settings
 from ..organizer import movies as movie_org
 from ..organizer import tv as tv_org
-from ..parser import is_video_file
-from .state import AppState, get_state
+from ..parser import is_video_file, parse_filename
+from .state import ActivityEntry, AppState, PendingItem, get_state, pending_id
 
 router = APIRouter(prefix="/api")
 
@@ -65,6 +65,7 @@ def stats(state: StateDep) -> dict:
         "tv_episode_count": tv_count,
         "scan_status": scan_status,
         "error_count": error_count,
+        "pending_count": state.get_pending_count(),
         "uptime_seconds": uptime,
     }
 
@@ -136,7 +137,6 @@ def trigger_scan(library_type: str, state: StateDep) -> dict:
     from ..metadata.tmdb import TMDBClient
     from ..metadata.tvdb import TVDBClient
     from ..scanner import scan_library
-    from .state import ActivityEntry
 
     tmdb = TMDBClient(settings.tmdb_api_key)
     tvdb = TVDBClient(settings.tvdb_api_key) if settings.tvdb_api_key.strip() else None
@@ -150,6 +150,8 @@ def trigger_scan(library_type: str, state: StateDep) -> dict:
             state.scan_status[library_type].last_run = datetime.utcnow()
             for r in reports:
                 state.add_activity(ActivityEntry.from_report(r, library_type))
+                if r.result.value == "error_no_metadata":
+                    _add_pending(state, r.source, library_type, r.message, settings)
         except Exception as exc:
             state.scan_status[library_type].last_error = str(exc)
         finally:
@@ -163,6 +165,93 @@ def trigger_scan(library_type: str, state: StateDep) -> dict:
         raise HTTPException(status_code=409, detail=f"Scan for '{library_type}' is already running")
 
     return {"status": "started", "library_type": library_type}
+
+
+def _add_pending(
+    state: AppState,
+    source: "Path",
+    library_type: str,
+    last_error: str,
+    settings: Any,
+) -> None:
+    path_str = str(source)
+    parsed = parse_filename(source, settings)
+    state.add_pending(PendingItem(
+        id=pending_id(path_str),
+        path=path_str,
+        library_type=library_type,
+        parsed_title=parsed.raw_title,
+        parsed_year=parsed.year,
+        first_seen=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+        last_error=last_error,
+    ))
+
+
+# ------------------------------------------------------------------
+# Pending review queue
+# ------------------------------------------------------------------
+
+@router.get("/pending")
+def get_pending(state: StateDep) -> dict:
+    items = state.get_pending_list()
+    return {"total": len(items), "items": [asdict(i) for i in items]}
+
+
+class RetryBody(BaseModel):
+    title: str
+    year: int | None = None
+    library_type: str | None = None
+
+
+@router.post("/pending/{item_id}/retry")
+def retry_pending(item_id: str, body: RetryBody, state: StateDep) -> dict:
+    with state._lock:
+        item = state.pending.get(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Pending item not found")
+
+    from ..metadata.tmdb import TMDBClient
+    from ..metadata.tvdb import TVDBClient
+    from ..processor import process, ProcessResult
+
+    settings = get_settings()
+    tmdb = TMDBClient(settings.tmdb_api_key)
+    tvdb = TVDBClient(settings.tvdb_api_key) if settings.tvdb_api_key.strip() else None
+    lib_type = body.library_type or item.library_type
+
+    try:
+        report = process(
+            Path(item.path),
+            settings,
+            tmdb,
+            tvdb,
+            lib_type,
+            title_override=body.title.strip(),
+            year_override=body.year,
+        )
+    finally:
+        tmdb.close()
+        if tvdb:
+            tvdb.close()
+
+    if report.result == ProcessResult.MOVED:
+        state.remove_pending(item_id)
+        state.add_activity(ActivityEntry.from_report(report, lib_type))
+        return {"status": "moved", "destination": str(report.destination)}
+
+    if report.result == ProcessResult.ERROR_NO_METADATA:
+        return {"status": "error", "detail": f"Still no match for {body.title!r}"}
+
+    # Any other result (skipped, dry_run, conflict, etc.) — clear from pending
+    state.remove_pending(item_id)
+    state.add_activity(ActivityEntry.from_report(report, lib_type))
+    return {"status": report.result.value}
+
+
+@router.delete("/pending/{item_id}", status_code=204)
+def dismiss_pending(item_id: str, state: StateDep) -> None:
+    if not state.remove_pending(item_id):
+        raise HTTPException(status_code=404, detail="Pending item not found")
 
 
 # ------------------------------------------------------------------

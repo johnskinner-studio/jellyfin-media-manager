@@ -72,7 +72,7 @@
         </div>
 
         <!-- Stats cards -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
             <div class="text-3xl font-bold text-blue-400" x-text="stats ? stats.movie_count : '—'"></div>
             <div class="text-sm text-gray-400 mt-1">Movies</div>
@@ -88,6 +88,65 @@
           <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
             <div class="text-3xl font-bold text-red-400" x-text="stats ? stats.error_count : '—'"></div>
             <div class="text-sm text-gray-400 mt-1">Errors</div>
+          </div>
+          <div
+            class="rounded-xl border p-4 cursor-pointer transition-colors"
+            :class="(stats && stats.pending_count > 0) ? 'bg-yellow-950 border-yellow-700 hover:bg-yellow-900' : 'bg-gray-900 border-gray-800'"
+            @click="(stats && stats.pending_count > 0) && (showReview = !showReview)"
+          >
+            <div class="text-3xl font-bold" :class="(stats && stats.pending_count > 0) ? 'text-yellow-400' : 'text-gray-600'" x-text="stats ? stats.pending_count : '—'"></div>
+            <div class="text-sm mt-1" :class="(stats && stats.pending_count > 0) ? 'text-yellow-300' : 'text-gray-400'">Needs Review</div>
+          </div>
+        </div>
+
+        <!-- Needs Review panel -->
+        <div x-show="showReview && pendingItems.length > 0" class="bg-yellow-950 border border-yellow-800 rounded-xl">
+          <div class="px-5 py-4 border-b border-yellow-800 flex items-center justify-between">
+            <div>
+              <h2 class="font-semibold text-yellow-200">Needs Review</h2>
+              <p class="text-xs text-yellow-500 mt-0.5">These files could not be identified automatically. Provide a corrected title so they can be organised.</p>
+            </div>
+            <button @click="showReview = false" class="text-yellow-600 hover:text-yellow-400 text-lg leading-none">✕</button>
+          </div>
+          <div class="divide-y divide-yellow-900">
+            <template x-for="item in pendingItems" :key="item.id">
+              <div x-data="pendingRow(item)" class="px-5 py-4 space-y-3">
+                <div class="flex items-start gap-3">
+                  <span class="text-yellow-400 mt-0.5">⚠</span>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm text-yellow-100 font-mono truncate" x-text="fileName(item.path)"></div>
+                    <div class="text-xs text-yellow-600 mt-0.5" x-text="item.last_error"></div>
+                  </div>
+                  <button @click="dismiss()" :disabled="busy" class="shrink-0 text-xs text-yellow-700 hover:text-yellow-500 disabled:opacity-40">Dismiss</button>
+                </div>
+                <div class="flex flex-wrap gap-2 items-end">
+                  <div class="flex-1 min-w-48">
+                    <label class="text-xs text-yellow-500 block mb-1">Title</label>
+                    <input x-model="title" :placeholder="item.parsed_title || 'Enter correct title…'"
+                      class="w-full bg-gray-900 border border-yellow-800 rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-yellow-500" />
+                  </div>
+                  <div class="w-24">
+                    <label class="text-xs text-yellow-500 block mb-1">Year (optional)</label>
+                    <input x-model.number="year" type="number" :placeholder="item.parsed_year || 'YYYY'"
+                      class="w-full bg-gray-900 border border-yellow-800 rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-yellow-500" />
+                  </div>
+                  <div class="w-28">
+                    <label class="text-xs text-yellow-500 block mb-1">Type</label>
+                    <select x-model="libType"
+                      class="w-full bg-gray-900 border border-yellow-800 rounded-lg px-3 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-yellow-500">
+                      <option value="movies">Movies</option>
+                      <option value="tv">TV Shows</option>
+                    </select>
+                  </div>
+                  <button @click="retry()" :disabled="busy || !title.trim()"
+                    class="px-4 py-1.5 bg-yellow-600 hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-medium text-white transition-colors">
+                    <span x-show="!busy">Retry</span>
+                    <span x-show="busy">…</span>
+                  </button>
+                </div>
+                <div x-show="feedback" class="text-xs" :class="feedbackOk ? 'text-green-400' : 'text-red-400'" x-text="feedback"></div>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -452,21 +511,33 @@ function dashboard() {
   return {
     stats: null,
     activity: [],
+    pendingItems: [],
+    showReview: false,
     scanning: { movies: false, tv: false },
     _pollTimers: {},
 
     async init() {
       await this.refresh();
       setInterval(() => this.refresh(), 10000);
+      window.addEventListener('pending-resolved', (e) => {
+        this.pendingItems = this.pendingItems.filter(p => p.id !== e.detail);
+        if (this.pendingItems.length === 0) this.showReview = false;
+        if (this.stats) this.stats.pending_count = this.pendingItems.length;
+      });
     },
     async refresh() {
       try {
-        const [s, a] = await Promise.all([
+        const [s, a, p] = await Promise.all([
           fetch('/api/stats').then(r => r.json()),
           fetch('/api/activity?limit=20').then(r => r.json()),
+          fetch('/api/pending').then(r => r.json()),
         ]);
         this.stats = s;
         this.activity = a.items;
+        this.pendingItems = p.items;
+        if (s.pending_count > 0 && this.pendingItems.length > 0) {
+          this.showReview = true;
+        }
         // Sync scanning state from server
         if (s.scan_status) {
           this.scanning.movies = s.scan_status.movies?.running || false;
@@ -556,6 +627,7 @@ function libraryBrowser() {
     },
     switchLib(lib) {
       this.activeLib = lib;
+      this.tree = null;
       this.loadTree();
     },
     formatSize(bytes) {
@@ -711,6 +783,64 @@ function logsViewer() {
     },
     destroy() { this.ws?.close(); },
   }
+}
+
+// ------------------------------------------------------------------
+// Pending review row
+// ------------------------------------------------------------------
+function pendingRow(item) {
+  return {
+    title: item.parsed_title || '',
+    year: item.parsed_year || null,
+    libType: item.library_type,
+    busy: false,
+    feedback: '',
+    feedbackOk: false,
+
+    fileName(path) { return path ? path.split('/').pop() : path; },
+
+    async retry() {
+      if (!this.title.trim() || this.busy) return;
+      this.busy = true;
+      this.feedback = '';
+      try {
+        const resp = await fetch(`/api/pending/${item.id}/retry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: this.title.trim(), year: this.year || null, library_type: this.libType }),
+        });
+        const data = await resp.json();
+        if (data.status === 'moved') {
+          this.feedbackOk = true;
+          this.feedback = `Moved → ${data.destination.split('/').pop()}`;
+          // Remove from parent list after a moment
+          setTimeout(() => window.dispatchEvent(new CustomEvent('pending-resolved', { detail: item.id })), 1200);
+        } else if (data.status === 'error') {
+          this.feedbackOk = false;
+          this.feedback = data.detail || 'Still no match — try a different title';
+        } else {
+          this.feedbackOk = true;
+          this.feedback = data.status;
+          setTimeout(() => window.dispatchEvent(new CustomEvent('pending-resolved', { detail: item.id })), 1200);
+        }
+      } catch (_) {
+        this.feedbackOk = false;
+        this.feedback = 'Network error';
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    async dismiss() {
+      this.busy = true;
+      try {
+        await fetch(`/api/pending/${item.id}`, { method: 'DELETE' });
+        window.dispatchEvent(new CustomEvent('pending-resolved', { detail: item.id }));
+      } catch (_) {} finally {
+        this.busy = false;
+      }
+    },
+  };
 }
 
 // ------------------------------------------------------------------

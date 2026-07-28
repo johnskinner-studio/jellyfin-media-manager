@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .cleaner import remove_empty_dirs
+from .cleaner import cleanup_source
 from .metadata.tmdb import TMDBClient, TMDBEpisode, TMDBMovie
 from .organizer import movies as movie_organizer
 from .organizer import tv as tv_organizer
@@ -47,9 +47,11 @@ def process(
     tmdb: TMDBClient,
     tvdb: "TVDBClient | None",
     library_type: str,  # "movies" or "tv"
+    title_override: str | None = None,
+    year_override: int | None = None,
 ) -> ProcessReport:
     try:
-        return _process(candidate, settings, tmdb, tvdb, library_type)
+        return _process(candidate, settings, tmdb, tvdb, library_type, title_override, year_override)
     except Exception as exc:
         log.exception("Unexpected error processing %s", candidate)
         return ProcessReport(
@@ -65,6 +67,8 @@ def _process(
     tmdb: TMDBClient,
     tvdb: "TVDBClient | None",
     library_type: str,
+    title_override: str | None = None,
+    year_override: int | None = None,
 ) -> ProcessReport:
     # 1. Resolve actual video file
     if candidate.is_dir():
@@ -115,6 +119,10 @@ def _process(
 
     # 5. Parse filename
     parsed = parse_filename(video_file, settings)
+    if title_override:
+        parsed.raw_title = title_override
+    if year_override is not None:
+        parsed.year = year_override
 
     # 6. Metadata lookup
     destination = _resolve_destination(
@@ -159,9 +167,10 @@ def _process(
     shutil.move(str(video_file), str(destination))
     log.info("Moved: %s → %s", video_file, destination)
 
-    # 11. Clean up source folder if candidate was a directory
-    if candidate.is_dir() and candidate.exists():
-        remove_empty_dirs(candidate, library_path, dry_run=False)
+    # 11. Clean up source location — delete junk files and remove empty dirs
+    source_dir = candidate if candidate.is_dir() else candidate.parent
+    if source_dir != library_path:
+        cleanup_source(source_dir, library_path, settings.ignored_extensions, dry_run=False)
 
     return ProcessReport(
         source=candidate,

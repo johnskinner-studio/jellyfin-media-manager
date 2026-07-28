@@ -103,6 +103,26 @@ class DebouncedWorker(threading.Thread):
             log.info("Processing new media: %s", path)
             report = process(path, self._settings, self._tmdb, self._tvdb, library_type)
             _log_report(report)
+            if report.result.value == "error_no_metadata":
+                self._add_to_pending(path, library_type, report.message)
+
+    def _add_to_pending(self, path: Path, library_type: str, last_error: str) -> None:
+        try:
+            from datetime import datetime
+            from .parser import parse_filename
+            from .web.state import PendingItem, get_state, pending_id
+            parsed = parse_filename(path, self._settings)
+            get_state().add_pending(PendingItem(
+                id=pending_id(str(path)),
+                path=str(path),
+                library_type=library_type,
+                parsed_title=parsed.raw_title,
+                parsed_year=parsed.year,
+                first_seen=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+                last_error=last_error,
+            ))
+        except Exception:
+            log.debug("Could not add pending item for %s", path, exc_info=True)
 
     def _detect_library_type(self, path: Path) -> str | None:
         try:

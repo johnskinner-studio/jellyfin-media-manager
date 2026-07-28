@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
 from collections import deque
@@ -12,6 +13,10 @@ from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from fastapi import WebSocket
     from ..processor import ProcessReport
+
+
+def pending_id(path: str) -> str:
+    return hashlib.md5(path.encode()).hexdigest()[:12]
 
 
 @dataclass
@@ -44,6 +49,17 @@ class ActivityEntry:
 
 
 @dataclass
+class PendingItem:
+    id: str
+    path: str
+    library_type: str
+    parsed_title: str
+    parsed_year: int | None
+    first_seen: str
+    last_error: str = ""
+
+
+@dataclass
 class ScanStatus:
     running: bool = False
     last_run: datetime | None = None
@@ -54,6 +70,7 @@ class AppState:
     def __init__(self) -> None:
         self.activity: deque[ActivityEntry] = deque(maxlen=500)
         self.log_buffer: deque[LogEntry] = deque(maxlen=2000)
+        self.pending: dict[str, PendingItem] = {}
         self.scan_status: dict[str, ScanStatus] = {
             "movies": ScanStatus(),
             "tv": ScanStatus(),
@@ -125,6 +142,22 @@ class AppState:
     def get_activity_list(self) -> list[ActivityEntry]:
         with self._lock:
             return list(self.activity)
+
+    def add_pending(self, item: PendingItem) -> None:
+        with self._lock:
+            self.pending.setdefault(item.id, item)
+
+    def remove_pending(self, item_id: str) -> bool:
+        with self._lock:
+            return self.pending.pop(item_id, None) is not None
+
+    def get_pending_list(self) -> list[PendingItem]:
+        with self._lock:
+            return sorted(self.pending.values(), key=lambda x: x.first_seen, reverse=True)
+
+    def get_pending_count(self) -> int:
+        with self._lock:
+            return len(self.pending)
 
     def get_log_list(self) -> list[LogEntry]:
         with self._lock:
