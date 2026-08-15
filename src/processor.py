@@ -166,11 +166,23 @@ def _process(
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(video_file), str(destination))
     log.info("Moved: %s → %s", video_file, destination)
+    if settings.io_delay_seconds:
+        time.sleep(settings.io_delay_seconds)
 
-    # 11. Clean up source location — delete junk files and remove empty dirs
+    # 11. Clean up source location — delete junk files and remove empty dirs.
+    # Deferred until no other eligible videos remain in source_dir: a season
+    # pack queues each episode separately, and cleaning up after every single
+    # one wastes a full rglob+delete pass while siblings are still pending.
     source_dir = candidate if candidate.is_dir() else candidate.parent
-    if source_dir != library_path:
-        cleanup_source(source_dir, library_path, dry_run=False)
+    if source_dir != library_path and not _has_pending_videos(source_dir, settings):
+        cleanup_source(
+            source_dir,
+            library_path,
+            dry_run=False,
+            video_extensions=settings.video_extensions,
+            min_file_size_bytes=settings.min_file_size_bytes,
+            delay_seconds=settings.io_delay_seconds,
+        )
 
     return ProcessReport(
         source=candidate,
@@ -200,6 +212,20 @@ def _extract_video_from_folder(folder: Path, settings: "Settings") -> Path | Non
     if not candidates:
         return None
     return max(candidates, key=lambda f: f.stat().st_size)
+
+
+def _has_pending_videos(source_dir: Path, settings: "Settings") -> bool:
+    """True if source_dir still contains an eligible video file (e.g. an
+    unprocessed sibling episode in a season pack, or one flagged for human
+    assistance) — cleanup should wait until this is False."""
+    if not source_dir.exists():
+        return False
+    return any(
+        f.is_file()
+        and is_video_file(f, settings)
+        and f.stat().st_size >= settings.min_file_size_bytes
+        for f in source_dir.rglob("*")
+    )
 
 
 def _is_in_ignored_dir(file: Path, root: Path, settings: "Settings") -> bool:

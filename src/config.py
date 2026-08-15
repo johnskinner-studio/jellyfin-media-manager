@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 CONFIG_JSON_PATH = Path("config.json")
 
 _EDITABLE_FIELDS = frozenset(
-    {"dry_run", "log_level", "min_file_size_mb", "settle_delay", "scan_workers"}
+    {"dry_run", "log_level", "min_file_size_mb", "settle_delay", "scan_workers", "io_delay_seconds"}
 )
 
 
@@ -42,6 +42,12 @@ class Settings(BaseSettings):
 
     # Worker threads for the startup scan
     scan_workers: int = 4
+
+    # Seconds to sleep after each destructive filesystem op (move/delete/rmdir).
+    # There's no need to process a backlog at full speed — a small pause between
+    # writes spreads I/O out instead of bursting, which matters on weak/shared
+    # power (e.g. a bus-powered USB drive on a Raspberry Pi).
+    io_delay_seconds: float = 0.5
 
     video_extensions: frozenset[str] = frozenset(
         {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv"}

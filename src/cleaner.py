@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ def clean_orphaned_dirs(
     min_file_size_bytes: int,
     video_extensions: frozenset[str],
     dry_run: bool = False,
+    delay_seconds: float = 0.0,
 ) -> int:
     """
     Walk the top level of library_path and remove any directory that contains
@@ -70,7 +72,7 @@ def clean_orphaned_dirs(
         if has_video:
             continue
         log.info("%sRemoving orphaned download dir: %s", "[DRY RUN] Would remove" if dry_run else "", item)
-        cleanup_source(item, library_path, dry_run=dry_run)
+        cleanup_source(item, library_path, dry_run=dry_run, delay_seconds=delay_seconds)
         cleaned += 1
     return cleaned
 
@@ -79,18 +81,41 @@ def cleanup_source(
     source_dir: Path,
     stop_at: Path,
     dry_run: bool = False,
+    video_extensions: frozenset[str] | None = None,
+    min_file_size_bytes: int = 0,
+    delay_seconds: float = 0.0,
 ) -> None:
     """
-    After a video file has been moved out of source_dir, delete everything
-    that remains (all files regardless of extension, then empty directories)
-    and remove source_dir itself.
+    After a video file has been moved out of source_dir, delete leftover
+    junk (rar, nfo, jpg, srt, sfv, sample, etc.) and remove now-empty
+    directories, ending with source_dir itself.
+
+    Other eligible video files (e.g. sibling episodes in a season pack that
+    haven't been processed yet) are left untouched — deleting them here would
+    race with the watcher/scanner still queued to move them, leaving those
+    later processing attempts pointing at a file that no longer exists.
+
+    delay_seconds paces each individual delete so a folder full of junk
+    doesn't turn into a burst of back-to-back writes against weak storage.
     """
     if source_dir == stop_at or not source_dir.exists():
         return
 
-    # Delete all remaining files (rar, nfo, jpg, srt, sfv, sample, etc.)
+    def _is_eligible_video(f: Path) -> bool:
+        if video_extensions is None:
+            return False
+        if f.suffix.lower() not in video_extensions:
+            return False
+        try:
+            return f.stat().st_size >= min_file_size_bytes
+        except OSError:
+            return False
+
+    # Delete leftover junk files, but keep any video still eligible for processing
     for f in source_dir.rglob("*"):
         if not f.is_file():
+            continue
+        if _is_eligible_video(f):
             continue
         if dry_run:
             log.info("[DRY RUN] Would delete: %s", f)
@@ -98,10 +123,13 @@ def cleanup_source(
             try:
                 f.unlink()
                 log.debug("Deleted: %s", f)
+                if delay_seconds:
+                    time.sleep(delay_seconds)
             except OSError as exc:
                 log.warning("Could not delete %s: %s", f, exc)
 
-    # Remove subdirectories bottom-up, then the source dir itself
+    # Remove subdirectories bottom-up, then the source dir itself.
+    # rmdir naturally no-ops (raises ENOTEMPTY) if an eligible video remains.
     for d in sorted(source_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
         if not d.is_dir():
             continue
@@ -111,8 +139,10 @@ def cleanup_source(
             try:
                 d.rmdir()
                 log.debug("Removed dir: %s", d)
+                if delay_seconds:
+                    time.sleep(delay_seconds)
             except OSError as exc:
-                log.warning("Could not remove dir %s: %s", d, exc)
+                log.debug("Could not remove dir %s: %s", d, exc)
 
     if dry_run:
         log.info("[DRY RUN] Would remove source dir: %s", source_dir)
@@ -121,4 +151,4 @@ def cleanup_source(
             source_dir.rmdir()
             log.debug("Removed source dir: %s", source_dir)
         except OSError as exc:
-            log.warning("Could not remove source dir %s: %s", source_dir, exc)
+            log.debug("Could not remove source dir %s (likely still has pending videos): %s", source_dir, exc)
