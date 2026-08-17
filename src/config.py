@@ -10,7 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 CONFIG_JSON_PATH = Path("config.json")
 
 _EDITABLE_FIELDS = frozenset(
-    {"dry_run", "log_level", "min_file_size_mb", "settle_delay", "scan_workers", "io_delay_seconds"}
+    {
+        "dry_run", "log_level", "min_file_size_mb", "settle_delay", "scan_workers",
+        "io_delay_seconds", "ui_poll_interval_seconds",
+    }
 )
 
 
@@ -48,6 +51,9 @@ class Settings(BaseSettings):
     # writes spreads I/O out instead of bursting, which matters on weak/shared
     # power (e.g. a bus-powered USB drive on a Raspberry Pi).
     io_delay_seconds: float = 0.5
+
+    # How often (seconds) the web UI polls for stats/activity/log updates
+    ui_poll_interval_seconds: float = 2.0
 
     video_extensions: frozenset[str] = frozenset(
         {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv"}

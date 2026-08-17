@@ -375,6 +375,7 @@ class SettingsUpdate(BaseModel):
     settle_delay: int | None = None
     scan_workers: int | None = None
     io_delay_seconds: float | None = None
+    ui_poll_interval_seconds: float | None = None
 
 
 def _mask_key(key: str) -> str:
@@ -394,6 +395,7 @@ def get_settings_endpoint() -> dict:
         "settle_delay": s.settle_delay,
         "scan_workers": s.scan_workers,
         "io_delay_seconds": s.io_delay_seconds,
+        "ui_poll_interval_seconds": s.ui_poll_interval_seconds,
         "stability_check_interval": s.stability_check_interval,
         "stability_check_retries": s.stability_check_retries,
         "tmdb_api_key": _mask_key(s.tmdb_api_key),

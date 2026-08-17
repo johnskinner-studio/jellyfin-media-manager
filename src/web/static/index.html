@@ -445,6 +445,14 @@
               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500" />
           </div>
 
+          <!-- UI poll interval -->
+          <div>
+            <label class="text-sm font-medium text-gray-200">UI Poll Interval (seconds)</label>
+            <div class="text-xs text-gray-500 mb-1">How often the Dashboard and Activity Log refresh themselves</div>
+            <input type="number" x-model.number="form.ui_poll_interval_seconds" min="0.5" max="60" step="0.5"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-blue-500" />
+          </div>
+
           <!-- Save button -->
           <div class="flex items-center gap-3 pt-2">
             <button @click="save()"
@@ -476,6 +484,13 @@
 </div>
 
 <script>
+// Shared poll interval (ms), backed by the ui_poll_interval_seconds setting.
+// Defaults to 2s until /api/settings resolves; components read the current
+// value when they set up their own interval.
+document.addEventListener('alpine:init', () => {
+  Alpine.store('config', { pollMs: 2000 });
+});
+
 // ------------------------------------------------------------------
 // Root app component
 // ------------------------------------------------------------------
@@ -491,9 +506,17 @@ function app() {
       { id: 'settings',  label: 'Settings',   icon: '⚙️' },
     ],
     async init() {
+      // Resolve the configured poll interval before anything else starts polling
+      try {
+        const s = await fetch('/api/settings').then(r => r.json());
+        if (s.ui_poll_interval_seconds) {
+          Alpine.store('config').pollMs = Math.max(500, s.ui_poll_interval_seconds * 1000);
+        }
+      } catch (_) {}
+
       // Poll stats for sidebar uptime and global state
       await this.fetchStats();
-      setInterval(() => this.fetchStats(), 15000);
+      setInterval(() => this.fetchStats(), Alpine.store('config').pollMs);
 
       // Navigate to activity on custom event
       window.addEventListener('nav-activity', () => { this.page = 'activity'; });
@@ -531,7 +554,7 @@ function dashboard() {
 
     async init() {
       await this.refresh();
-      setInterval(() => this.refresh(), 10000);
+      setInterval(() => this.refresh(), Alpine.store('config').pollMs);
       window.addEventListener('pending-resolved', (e) => {
         this.pendingItems = this.pendingItems.filter(p => p.id !== e.detail);
         if (this.pendingItems.length === 0) this.showReview = false;
@@ -724,7 +747,10 @@ function activityLog() {
       { value: 'error_exception', label: '✗ Exception' },
     ],
 
-    async init() { await this.load(); },
+    async init() {
+      await this.load();
+      setInterval(() => this.load(), Alpine.store('config').pollMs);
+    },
     async load() {
       const offset = this.currentPage * this.pageSize;
       const filter = this.filterResult ? `&result=${encodeURIComponent(this.filterResult)}` : '';
@@ -880,7 +906,7 @@ function pendingRow(item) {
 // ------------------------------------------------------------------
 function settingsForm() {
   return {
-    form: { dry_run: false, log_level: 'INFO', min_file_size_mb: 100, settle_delay: 10, scan_workers: 4 },
+    form: { dry_run: false, log_level: 'INFO', min_file_size_mb: 100, settle_delay: 10, scan_workers: 4, ui_poll_interval_seconds: 2 },
     readOnly: {},
     saved: false,
     error: null,
@@ -893,6 +919,7 @@ function settingsForm() {
         this.form.min_file_size_mb = data.min_file_size_mb;
         this.form.settle_delay = data.settle_delay;
         this.form.scan_workers = data.scan_workers;
+        this.form.ui_poll_interval_seconds = data.ui_poll_interval_seconds;
         this.readOnly = {
           tmdb_api_key: data.tmdb_api_key,
           tvdb_api_key: data.tvdb_api_key,
@@ -915,6 +942,9 @@ function settingsForm() {
         });
         if (resp.ok) {
           this.saved = true;
+          if (this.form.ui_poll_interval_seconds) {
+            Alpine.store('config').pollMs = Math.max(500, this.form.ui_poll_interval_seconds * 1000);
+          }
           setTimeout(() => { this.saved = false; }, 3000);
         } else {
           const err = await resp.json();

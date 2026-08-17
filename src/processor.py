@@ -83,6 +83,65 @@ def _process(
             message="No eligible video file found",
         )
 
+    report = _process_video(
+        video_file, candidate, settings, tmdb, tvdb, library_type, title_override, year_override
+    )
+
+    # A folder candidate may hold more than one video (e.g. a season pack
+    # dropped in as a single unit). Once the first one resolves, sweep any
+    # remaining siblings using the same title/year so one human correction
+    # clears the whole folder instead of requiring a retry per episode.
+    if candidate.is_dir() and report.result == ProcessResult.MOVED:
+        _sweep_remaining_siblings(
+            candidate, settings, tmdb, tvdb, library_type, title_override, year_override
+        )
+
+    return report
+
+
+def _sweep_remaining_siblings(
+    folder: Path,
+    settings: "Settings",
+    tmdb: TMDBClient,
+    tvdb: "TVDBClient | None",
+    library_type: str,
+    title_override: str | None,
+    year_override: int | None,
+) -> None:
+    while True:
+        video_file = _extract_video_from_folder(folder, settings)
+        if video_file is None:
+            return
+        report = _process_video(
+            video_file, folder, settings, tmdb, tvdb, library_type, title_override, year_override
+        )
+        if report.result == ProcessResult.MOVED:
+            log.info("Organized (swept): %s → %s", report.source, report.destination)
+        else:
+            # Stop on anything but a clean move — including a fresh metadata
+            # failure — so it surfaces for review instead of looping forever.
+            if report.result in (
+                ProcessResult.ERROR_NO_METADATA,
+                ProcessResult.ERROR_CONFLICT,
+                ProcessResult.ERROR_EXCEPTION,
+            ):
+                log.warning(
+                    "Failed [%s] (swept): %s — %s",
+                    report.result.value, report.source, report.message,
+                )
+            return
+
+
+def _process_video(
+    video_file: Path,
+    candidate: Path,
+    settings: "Settings",
+    tmdb: TMDBClient,
+    tvdb: "TVDBClient | None",
+    library_type: str,
+    title_override: str | None = None,
+    year_override: int | None = None,
+) -> ProcessReport:
     # 2. Size check
     if video_file.stat().st_size < settings.min_file_size_bytes:
         return ProcessReport(
