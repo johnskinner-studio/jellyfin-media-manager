@@ -239,6 +239,8 @@ def retry_pending(item_id: str, body: RetryBody, state: StateDep) -> dict:
     if item is None:
         raise HTTPException(status_code=404, detail="Pending item not found")
 
+    import threading
+
     from ..metadata.tmdb import TMDBClient
     from ..metadata.tvdb import TVDBClient
     from ..processor import process, ProcessResult
@@ -247,16 +249,21 @@ def retry_pending(item_id: str, body: RetryBody, state: StateDep) -> dict:
     tmdb = TMDBClient(settings.tmdb_api_key)
     tvdb = TVDBClient(settings.tvdb_api_key) if settings.tvdb_api_key.strip() else None
     lib_type = body.library_type or item.library_type
+    path = Path(item.path)
 
     try:
+        # sweep=False: resolve/move only this one file so the request returns
+        # promptly. If it's a folder with siblings left (a season pack), the
+        # rest is swept in a background thread below instead of blocking here.
         report = process(
-            Path(item.path),
+            path,
             settings,
             tmdb,
             tvdb,
             lib_type,
             title_override=body.title.strip(),
             year_override=body.year,
+            sweep=False,
         )
     finally:
         tmdb.close()
@@ -266,6 +273,31 @@ def retry_pending(item_id: str, body: RetryBody, state: StateDep) -> dict:
     if report.result == ProcessResult.MOVED:
         state.remove_pending(item_id)
         state.add_activity(ActivityEntry.from_report(report, lib_type))
+
+        if path.is_dir():
+            title = body.title.strip()
+            year = body.year
+
+            def _continue_sweep() -> None:
+                sweep_tmdb = TMDBClient(settings.tmdb_api_key)
+                sweep_tvdb = TVDBClient(settings.tvdb_api_key) if settings.tvdb_api_key.strip() else None
+                try:
+                    process(
+                        path,
+                        settings,
+                        sweep_tmdb,
+                        sweep_tvdb,
+                        lib_type,
+                        title_override=title,
+                        year_override=year,
+                    )
+                finally:
+                    sweep_tmdb.close()
+                    if sweep_tvdb:
+                        sweep_tvdb.close()
+
+            threading.Thread(target=_continue_sweep, daemon=True, name="pending-sweep").start()
+
         return {"status": "moved", "destination": str(report.destination)}
 
     if report.result == ProcessResult.ERROR_NO_METADATA:

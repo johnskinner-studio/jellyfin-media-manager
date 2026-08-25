@@ -49,9 +49,10 @@ def process(
     library_type: str,  # "movies" or "tv"
     title_override: str | None = None,
     year_override: int | None = None,
+    sweep: bool = True,
 ) -> ProcessReport:
     try:
-        return _process(candidate, settings, tmdb, tvdb, library_type, title_override, year_override)
+        return _process(candidate, settings, tmdb, tvdb, library_type, title_override, year_override, sweep)
     except Exception as exc:
         log.exception("Unexpected error processing %s", candidate)
         return ProcessReport(
@@ -69,10 +70,13 @@ def _process(
     library_type: str,
     title_override: str | None = None,
     year_override: int | None = None,
+    sweep: bool = True,
 ) -> ProcessReport:
     # 1. Resolve actual video file
     if candidate.is_dir():
-        video_file = _extract_video_from_folder(candidate, settings)
+        if library_type == "tv":
+            _purge_junk_tv_videos(candidate, settings)
+        video_file = _extract_video_from_folder(candidate, settings, library_type)
     else:
         video_file = candidate if is_video_file(candidate, settings) else None
 
@@ -91,7 +95,10 @@ def _process(
     # dropped in as a single unit). Once the first one resolves, sweep any
     # remaining siblings using the same title/year so one human correction
     # clears the whole folder instead of requiring a retry per episode.
-    if candidate.is_dir() and report.result == ProcessResult.MOVED:
+    # Callers on a request/response path (e.g. the pending-retry endpoint)
+    # pass sweep=False and continue the sweep in a background thread instead,
+    # so resolving one file doesn't block on moving the rest of the folder.
+    if candidate.is_dir() and report.result == ProcessResult.MOVED and sweep:
         _sweep_remaining_siblings(
             candidate, settings, tmdb, tvdb, library_type, title_override, year_override
         )
@@ -109,7 +116,7 @@ def _sweep_remaining_siblings(
     year_override: int | None,
 ) -> None:
     while True:
-        video_file = _extract_video_from_folder(folder, settings)
+        video_file = _extract_video_from_folder(folder, settings, library_type)
         if video_file is None:
             return
         report = _process_video(
@@ -254,10 +261,15 @@ def _process_video(
 # Helpers
 # ------------------------------------------------------------------
 
-def _extract_video_from_folder(folder: Path, settings: "Settings") -> Path | None:
+def _extract_video_from_folder(
+    folder: Path, settings: "Settings", library_type: str | None = None
+) -> Path | None:
     """Return the largest eligible video file inside folder (recursively).
     Skips files whose parent directory name matches an ignored pattern
-    (e.g. Featurettes/, Extras/, Behind the Scenes/).
+    (e.g. Featurettes/, Extras/, Behind the Scenes/). For TV, junk videos
+    that don't parse as a real episode are excluded here too — they should
+    already be gone via _purge_junk_tv_videos, but this is a second guard
+    against ever picking one as the candidate to organize.
     """
     candidates = [
         f
@@ -268,9 +280,51 @@ def _extract_video_from_folder(folder: Path, settings: "Settings") -> Path | Non
         and not _is_in_ignored_dir(f, folder, settings)
         and f.stat().st_size >= settings.min_file_size_bytes
     ]
+    if library_type == "tv":
+        candidates = [f for f in candidates if _looks_like_episode(f, settings)]
     if not candidates:
         return None
     return max(candidates, key=lambda f: f.stat().st_size)
+
+
+def _looks_like_episode(path: Path, settings: "Settings") -> bool:
+    parsed = parse_filename(path, settings)
+    return (
+        parsed.media_type == "episode"
+        and parsed.season is not None
+        and parsed.episode is not None
+    )
+
+
+def _purge_junk_tv_videos(folder: Path, settings: "Settings") -> None:
+    """Delete video files in a TV folder that don't parse as real episodes —
+    interviews, deleted scenes, bonus clips, etc. bundled into the download
+    that name-based filtering (ignored_name_patterns) doesn't catch. Left in
+    place, these would otherwise get picked as "the" video to organize, or
+    block cleanup forever since they still look like a pending video.
+    """
+    for f in folder.rglob("*"):
+        if not f.is_file() or not is_video_file(f, settings):
+            continue
+        if is_ignored_file(f, settings) or _is_in_ignored_dir(f, folder, settings):
+            continue
+        try:
+            if f.stat().st_size < settings.min_file_size_bytes:
+                continue
+        except OSError:
+            continue
+        if _looks_like_episode(f, settings):
+            continue
+        if settings.dry_run:
+            log.info("[DRY RUN] Would delete non-episode video: %s", f)
+            continue
+        try:
+            f.unlink()
+            log.info("Deleted non-episode video (junk): %s", f)
+            if settings.io_delay_seconds:
+                time.sleep(settings.io_delay_seconds)
+        except OSError as exc:
+            log.warning("Could not delete junk video %s: %s", f, exc)
 
 
 def _has_pending_videos(source_dir: Path, settings: "Settings") -> bool:
