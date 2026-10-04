@@ -4,14 +4,14 @@ A Dockerized Python service that watches your Jellyfin media library and automat
 
 ## What it does
 
-- Watches `/mnt/storage/Movies` and `/mnt/storage/TV Shows` for new files
+- Watches the top level of `/mnt/storage/Movies` and `/mnt/storage/TV Shows` for new downloads (the already-organized subfolders are not watched, so an idle service does no disk work)
 - Looks up canonical metadata via TMDB (with optional TVDB fallback)
 - Renames and moves files to match Jellyfin's expected structure:
   - **Movies**: `Movies/Movie Title (Year)/Movie Title (Year).mkv`
   - **TV Shows**: `TV Shows/Show Name/Season 01/Show Name - S01E01 - Episode Title.mkv`
 - Handles torrent-style folders (picks the largest video file, discards extras)
 - Deletes empty leftover folders after moving files
-- Runs a full library scan on startup to catch already-misorganized files
+- Optionally runs a full library scan on startup (`SCAN_ON_START`, off by default) and can scan on demand from the web UI to catch already-misorganized files or files dropped into existing subfolders
 - Supports dry-run mode to preview changes before committing
 
 ## Setup
@@ -44,14 +44,9 @@ All settings are via environment variables (see `.env.example`):
 | `SCAN_ON_START` | `false` | Full library scan on container start |
 | `MIN_FILE_SIZE_MB` | `100` | Minimum file size to process (skips samples/trailers) |
 
-## inotify limit (large libraries)
+## Notes on watching
 
-On the Docker host, you may need to increase the inotify watch limit:
-
-```bash
-echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-```
+Only the top level of each library folder is watched, so downloads must land in the library root (e.g. `Movies/Some.Movie.2020.1080p/`). A file dropped directly into an existing organized subfolder is not noticed automatically; use the manual scan on the dashboard for that. Library counts shown in the UI are cached for a few minutes to avoid repeatedly walking the disk.
 
 ## Web Interface
 
@@ -65,7 +60,9 @@ Open `http://localhost:4000` after starting the container.
 | **Logs** | Real-time log stream via WebSocket; level filter + search |
 | **Settings** | Edit runtime config (dry run, log level, file size threshold, etc.) |
 
-Settings changed in the UI are persisted to `config.json` and survive container restarts.
+Settings changed in the UI (dry run, log level, minimum file size, settle delay, scan workers, I/O delay, UI poll interval) are persisted to `config.json` and survive container restarts. The UI polls every 15 seconds by default and pauses while the tab is hidden.
+
+> **Security:** the web UI and API have **no authentication** and can trigger scans and delete leftover folders. Do not expose port 4000 to the internet; keep it on your LAN or put it behind an authenticating reverse proxy or VPN.
 
 ## Architecture
 
