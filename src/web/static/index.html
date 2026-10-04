@@ -485,10 +485,10 @@
 
 <script>
 // Shared poll interval (ms), backed by the ui_poll_interval_seconds setting.
-// Defaults to 2s until /api/settings resolves; components read the current
+// Defaults to 15s until /api/settings resolves; components read the current
 // value when they set up their own interval.
 document.addEventListener('alpine:init', () => {
-  Alpine.store('config', { pollMs: 2000 });
+  Alpine.store('config', { pollMs: 15000 });
 });
 
 // ------------------------------------------------------------------
@@ -906,7 +906,7 @@ function pendingRow(item) {
 // ------------------------------------------------------------------
 function settingsForm() {
   return {
-    form: { dry_run: false, log_level: 'INFO', min_file_size_mb: 100, settle_delay: 10, scan_workers: 4, ui_poll_interval_seconds: 2 },
+    form: { dry_run: false, log_level: 'INFO', min_file_size_mb: 100, settle_delay: 10, scan_workers: 4, ui_poll_interval_seconds: 15 },
     readOnly: {},
     saved: false,
     error: null,

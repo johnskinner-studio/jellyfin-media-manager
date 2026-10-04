@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import threading
+import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -82,6 +83,10 @@ class AppState:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="api-scan")
         self._scan_futures: dict[str, Future | None] = {"movies": None, "tv": None}
+        # Library counts require walking the whole tree, so they are cached
+        # (key → (computed_at, value)) and invalidated when files are moved.
+        self._count_cache: dict[str, tuple[float, int]] = {}
+        self._count_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Sync methods (called from any thread)
@@ -90,6 +95,25 @@ class AppState:
     def add_activity(self, entry: ActivityEntry) -> None:
         with self._lock:
             self.activity.appendleft(entry)
+        if entry.result == "moved":
+            self.invalidate_counts()
+
+    def invalidate_counts(self) -> None:
+        with self._count_lock:
+            self._count_cache.clear()
+
+    def cached_count(self, key: str, compute: Callable[[], int], ttl: float = 300.0) -> int:
+        """Return a cached library count, recomputing at most once per ttl.
+        The lock is held while computing so concurrent callers share one walk
+        instead of each hammering the disk."""
+        with self._count_lock:
+            hit = self._count_cache.get(key)
+            now = time.monotonic()
+            if hit is not None and now - hit[0] < ttl:
+                return hit[1]
+            value = compute()
+            self._count_cache[key] = (time.monotonic(), value)
+            return value
 
     def add_log(self, entry: LogEntry) -> None:
         with self._lock:

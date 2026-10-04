@@ -17,5 +17,5 @@ services:
       - MOVIES_LIBRARY_PATH=${MOVIES_LIBRARY_PATH:-/mnt/storage/Movies}
       - DRY_RUN=${DRY_RUN:-false}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - SCAN_ON_START=${SCAN_ON_START:-true}
+      - SCAN_ON_START=${SCAN_ON_START:-false}
       - MIN_FILE_SIZE_MB=${MIN_FILE_SIZE_MB:-100}

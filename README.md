@@ -41,7 +41,7 @@ All settings are via environment variables (see `.env.example`):
 | `MOVIES_LIBRARY_PATH` | `/mnt/storage/Movies` | Path to movies library |
 | `DRY_RUN` | `false` | Log intended moves without executing them |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (DEBUG, INFO, WARNING) |
-| `SCAN_ON_START` | `true` | Full library scan on container start |
+| `SCAN_ON_START` | `false` | Full library scan on container start |
 | `MIN_FILE_SIZE_MB` | `100` | Minimum file size to process (skips samples/trailers) |
 
 ## inotify limit (large libraries)

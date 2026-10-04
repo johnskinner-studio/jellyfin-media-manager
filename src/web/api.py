@@ -45,8 +45,10 @@ def health() -> dict:
 @router.get("/stats")
 def stats(state: StateDep) -> dict:
     settings = get_settings()
-    movie_count = _count_movies(settings.movies_library_path)
-    tv_count = _count_tv_episodes(settings.tv_library_path)
+    movies_path = settings.movies_library_path
+    tv_path = settings.tv_library_path
+    movie_count = state.cached_count(f"movies:{movies_path}", lambda: _count_movies(movies_path))
+    tv_count = state.cached_count(f"tv:{tv_path}", lambda: _count_tv_episodes(tv_path))
     error_count = sum(
         1 for a in state.get_activity_list()
         if a.result.startswith("error_")
@@ -156,6 +158,7 @@ def trigger_scan(library_type: str, state: StateDep) -> dict:
             state.scan_status[library_type].last_error = str(exc)
         finally:
             state.scan_status[library_type].running = False
+            state.invalidate_counts()
             tmdb.close()
             if tvdb:
                 tvdb.close()

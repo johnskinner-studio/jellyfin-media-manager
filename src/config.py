@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     dry_run: bool = False
     log_level: str = "INFO"
-    scan_on_start: bool = True
+    scan_on_start: bool = False
     min_file_size_mb: int = 100
 
     # Seconds between size polls when checking file stability
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     io_delay_seconds: float = 0.5
 
     # How often (seconds) the web UI polls for stats/activity/log updates
-    ui_poll_interval_seconds: float = 2.0
+    ui_poll_interval_seconds: float = 15.0
 
     video_extensions: frozenset[str] = frozenset(
         {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv"}
