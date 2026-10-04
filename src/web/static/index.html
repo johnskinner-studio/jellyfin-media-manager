@@ -516,7 +516,7 @@ function app() {
 
       // Poll stats for sidebar uptime and global state
       await this.fetchStats();
-      setInterval(() => this.fetchStats(), Alpine.store('config').pollMs);
+      setInterval(() => { if (!document.hidden) this.fetchStats(); }, Alpine.store('config').pollMs);
 
       // Navigate to activity on custom event
       window.addEventListener('nav-activity', () => { this.page = 'activity'; });
@@ -554,7 +554,7 @@ function dashboard() {
 
     async init() {
       await this.refresh();
-      setInterval(() => this.refresh(), Alpine.store('config').pollMs);
+      setInterval(() => { if (!document.hidden) this.refresh(); }, Alpine.store('config').pollMs);
       window.addEventListener('pending-resolved', (e) => {
         this.pendingItems = this.pendingItems.filter(p => p.id !== e.detail);
         if (this.pendingItems.length === 0) this.showReview = false;
@@ -749,7 +749,7 @@ function activityLog() {
 
     async init() {
       await this.load();
-      setInterval(() => this.load(), Alpine.store('config').pollMs);
+      setInterval(() => { if (!document.hidden) this.load(); }, Alpine.store('config').pollMs);
     },
     async load() {
       const offset = this.currentPage * this.pageSize;

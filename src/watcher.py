@@ -75,8 +75,16 @@ class DebouncedWorker(threading.Thread):
     def run(self) -> None:
         settle = self._settings.settle_delay
         while not self._stop_event.is_set():
-            # Drain the queue, updating pending timers
+            # Sleep until an event arrives (or the next pending path is due)
+            # instead of waking every second while idle.
+            with self._lock:
+                next_due = min(self._pending.values(), default=None)
+            timeout = 5.0 if next_due is None else max(0.1, min(5.0, next_due - time.monotonic()))
             try:
+                path = self._queue.get(timeout=timeout)
+                with self._lock:
+                    self._pending[path] = time.monotonic() + settle
+                # Drain anything else that arrived at the same time
                 while True:
                     path = self._queue.get_nowait()
                     with self._lock:
@@ -85,7 +93,6 @@ class DebouncedWorker(threading.Thread):
                 pass
 
             self._flush_ready()
-            time.sleep(1.0)
 
     def _flush_ready(self) -> None:
         now = time.monotonic()
@@ -153,7 +160,10 @@ def start_observer(
     ]:
         if lib_path.exists():
             handler = MediaEventHandler(work_queue, lib_type)
-            observer.schedule(handler, str(lib_path), recursive=True)
+            # Non-recursive: new downloads land in the library root. Watching every
+            # folder of the organized library costs an inotify watch (and a startup
+            # tree walk) per directory for no benefit.
+            observer.schedule(handler, str(lib_path), recursive=False)
             log.info("Watching %s (%s)", lib_path, lib_type)
         else:
             log.warning("Library path not found, not watching: %s", lib_path)
